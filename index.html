@@ -1,5 +1,8 @@
-<!DOCTYPE html><html lang="ja"><head>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ゆるろん</title>
   <style>
     body {
@@ -122,7 +125,11 @@
     #message-input { flex-grow: 1; padding: 15px; font-size: 16px; border: 3px solid #FFFFFF; border-radius: 15px; outline: none; }
     #send-btn { padding: 15px 30px; font-size: 16px; background-color: #FFD166; color: #333333; border: 3px solid #FFFFFF; border-radius: 15px; cursor: pointer; font-weight: bold; }
     .btn-back { padding: 8px 18px; font-size: 14px; background-color: #FF7675; border-radius: 20px; border: 2px solid #FFFFFF; color: white; font-weight: bold; cursor: pointer;}
-  </style></head><body><div id="menu-screen">
+  </style>
+</head>
+<body>
+
+<div id="menu-screen">
   <div id="user-profile-area">
     <div id="user-icon-slot" onclick="triggerImageUpload()" title="クリックして写真をアップロード！">
       <img id="custom-icon-img" style="display:none;">
@@ -151,7 +158,10 @@
 
   <div class="bottom-btn-container">
     <button class="btn-play" onclick="startMatching()">PLAY</button>
-  </div></div><div id="vs-match-screen">
+  </div>
+</div>
+
+<div id="vs-match-screen">
   <div class="vs-match-box">
     <div id="match-countdown-banner">相手を探しています...</div>
 
@@ -169,7 +179,10 @@
       <div class="match-info-bar" id="match-enemy-info-bar">相手を待っています</div>
     </div>
   </div>
-  <button class="btn-back" style="margin-top: 20px;" onclick="goBackToMenu(true)">キャンセルして戻る</button></div><div id="debate-screen">
+  <button class="btn-back" style="margin-top: 20px;" onclick="goBackToMenu(true)">キャンセルして戻る</button>
+</div>
+
+<div id="debate-screen">
   <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 10px;">
     <div id="room-title" style="font-size: 14px; font-weight: bold; color: #FFFFFF;">部屋名: 接続中...</div>
     <button class="btn-back" onclick="goBackToMenu(true)">降参して戻る</button>
@@ -202,7 +215,10 @@
   <div class="chat-input-container">
     <input type="text" id="message-input" placeholder="自分の意見を入力...">
     <button id="send-btn" onclick="sendMessage()">送信</button>
-  </div></div><script>
+  </div>
+</div>
+
+<script>
   const SERVER_URL = 'https://dev-last-production.up.railway.app';
   
   let myRoomName = '';
@@ -429,7 +445,6 @@
           const hpKeys = Object.keys(roomData.hpData || {});
           if (!roomData || hpKeys.length < 2 || roomData.error) {
             clearInterval(countdownIntervalId);
-            // 相手が離脱した場合、部屋を出てメニューに戻る
             goBackToMenu(false);
             return;
           }
@@ -504,7 +519,6 @@
       }
       lastInputValue = currentInputValue;
 
-      // ★【変更点1】AFK放置判定を30秒(30000)から1分(60000ミリ秒)に変更
       if (Date.now() - lastActionTime > 60000) {
         triggerPenalty("⚠️「1分間の完全放置」が検知されました！");
         endGame("⚠️ 1分間操作がなかったため、放置ペナルティで敗北しました。", 0);
@@ -594,7 +608,6 @@
     fetch(`${SERVER_URL}/get-messages?roomName=${myRoomName}`)
       .then(response => response.json())
       .then(data => {
-        // ★【変更点2】相手が退出・キックなどでいなくなった場合、自分も自動で退出してメニューに戻る
         if (data.error || !data.hpData) {
           if (isMatchEstablished) {
             alert("相手が退出またはキックされたため、部屋を出ます。");
@@ -610,7 +623,6 @@
         const cleanMyName = myUsername.trim();
         const hasEnemy = hpKeys.some(player => !player.includes(cleanMyName));
 
-        // 相手が消えていることを検知したら即メニューに戻る
         if (isMatchEstablished && !hasEnemy) {
           alert("相手が退出またはキックされたため、部屋を出ます。");
           goBackToMenu(false);
@@ -621,11 +633,14 @@
         hpKeys.forEach(player => {
           if (!player.includes(cleanMyName)) { 
             enemyFullNameDisplay = player; 
+            if (typeof hpData[player] === 'number') {
+              enemyHP = hpData[player];
+            }
           }
         });
 
         document.getElementById('enemy-hp-label').innerText = `${enemyFullNameDisplay}: ${enemyHP}/2000`;
-        document.getElementById('enemy-hp-bar').style.width = `${(enemyHP / 2000) * 100}%`;
+        document.getElementById('enemy-hp-bar').style.width = `${Math.max(0, (enemyHP / 2000) * 100)}%`;
 
         if (messages.length === lastMessageCount) return;
         const chatBox = document.getElementById('chat-box');
@@ -722,6 +737,6 @@
         if (type === 'ranking') displayBox.innerHTML = `ランキング\n\n${data}`;
       });
   }
-  </script>
-  </body>
-  </html>
+</script>
+</body>
+</html>
