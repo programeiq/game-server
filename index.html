@@ -195,126 +195,106 @@
 </div>
 
 <script>
-  const SERVER_URL = 'http://localhost:3000';
+// ★新しいRailwayのURLを設定
+const SERVER_URL = "https://game-server-production-b1e3.up.railway.app";
 
-  let myUsername = '';
-  let myUserId = '';
-  let myRoomName = '';
-  let myChosenSide = '';
-  let myHp = 2000;
-  let pollingInterval = null;
+let currentRoom = null;
+let mySide = null;
+let pollInterval = null;
 
-  window.onload = () => {
-    myUserId = localStorage.getItem('yururon_user_id');
-    if (!myUserId) {
-      myUserId = `user_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      localStorage.setItem('yururon_user_id', myUserId);
+// 1. マッチング処理
+async function startMatching(username, userId) {
+  try {
+    const response = await fetch(`${SERVER_URL}/match?username=${encodeURIComponent(username)}&userId=${encodeURIComponent(userId)}`);
+    const text = await response.text();
+
+    if (text === 'WAITING_TIMEOUT') {
+      console.log("マッチングがタイムアウトしました。再試行します...");
+      return startMatching(username, userId); // 自動再試行
     }
-  };
 
-  function showScreen(id) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    if (text.startsWith('MATCHING_SUCCESS')) {
+      // レスポンス解析: MATCHING_SUCCESS | Room: room_xxx | お題 | YOUR_SIDE: sideA
+      const parts = text.split(' | ');
+      currentRoom = parts[1].replace('Room: ', '').trim();
+      const theme = parts[2];
+      mySide = parts[3] ? parts[3].replace('YOUR_SIDE: ', '').trim() : '';
+
+      console.log(`マッチング成功！ 部屋名: ${currentRoom}, お題: ${theme}, 自分の立場: ${mySide}`);
+      
+      // ポーリング（定期的にメッセージを取得）を開始
+      startPolling();
+      return { room: currentRoom, theme, side: mySide };
+    }
+  } catch (error) {
+    console.error("マッチングエラー:", error);
   }
+}
 
-  function startMatching() {
-    const input = document.getElementById('username-input').value.trim();
-    myUsername = input || '名無し';
-    showScreen('vs-match-screen');
-    pollMatch();
-  }
+// 2. メッセージ送信処理
+async function sendMessage(sender, text, currentHp) {
+  if (!currentRoom) return;
 
-  function cancelMatching() {
-    showScreen('main-screen');
-    location.reload();
-  }
-
-  function pollMatch() {
-    fetch(`${SERVER_URL}/match?username=${encodeURIComponent(myUsername)}&userId=${encodeURIComponent(myUserId)}`)
-      .then(res => res.text())
-      .then(data => {
-        if (data.startsWith('MATCHING_SUCCESS')) {
-          const parts = data.split(' | ');
-          myRoomName = parts[1].replace('Room: ', '').trim();
-          const theme = parts[2].trim();
-          myChosenSide = parts[3] ? parts[3].replace('YOUR_SIDE: ', '').trim() : '対戦相手';
-
-          startBattle(theme);
-        } else if (data === 'WAITING_TIMEOUT') {
-          if (document.getElementById('vs-match-screen').classList.contains('active')) {
-            pollMatch();
-          }
-        }
-      })
-      .catch(err => {
-        console.error('通信エラー:', err);
-        setTimeout(pollMatch, 3000);
-      });
-  }
-
-  function startBattle(theme) {
-    showScreen('battle-screen');
-    document.getElementById('battle-theme').innerText = `お題: ${theme}`;
-    document.getElementById('my-side').innerText = myChosenSide;
-    document.getElementById('my-hp').innerText = myHp;
-
-    pollingInterval = setInterval(fetchMessages, 1500);
-  }
-
-  function sendMessage() {
-    const input = document.getElementById('message-input');
-    const text = input.value.trim();
-    if (!text) return;
-
-    fetch(`${SERVER_URL}/send-message`, {
+  try {
+    const response = await fetch(`${SERVER_URL}/send-message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        roomName: myRoomName,
-        sender: myUsername,
+        roomName: currentRoom,
+        sender: sender,
         text: text,
-        hp: myHp
+        hp: currentHp
       })
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.status === 'ok') {
-        input.value = '';
-        fetchMessages();
-      }
     });
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("送信エラー:", error);
   }
+}
 
-  function fetchMessages() {
-    fetch(`${SERVER_URL}/get-messages?roomName=${encodeURIComponent(myRoomName)}`)
-      .then(res => {
-        if (!res.ok) throw new Error('Room not found');
-        return res.json();
-      })
-      .then(data => {
-        const chatBox = document.getElementById('chat-box');
-        chatBox.innerHTML = '';
-        data.messages.forEach(msg => {
-          const div = document.createElement('div');
-          div.className = `message ${msg.sender === myUsername ? 'my-message' : ''}`;
-          div.innerText = `${msg.sender}: ${msg.text}`;
-          chatBox.appendChild(div);
-        });
-        chatBox.scrollTop = chatBox.scrollHeight;
-      })
-      .catch(() => {
-        clearInterval(pollingInterval);
-      });
-  }
+// 3. メッセージ＆HP取得（定期受信）
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
 
-  function showRanking() {
-    showScreen('ranking-screen');
-    fetch(`${SERVER_URL}/ranking`)
-      .then(res => res.text())
-      .then(data => {
-        document.getElementById('ranking-content').innerText = data;
-      });
+  pollInterval = setInterval(async () => {
+    if (!currentRoom) return;
+
+    try {
+      const response = await fetch(`${SERVER_URL}/get-messages?roomName=${encodeURIComponent(currentRoom)}`);
+      if (response.ok) {
+        const data = await response.json();
+        // 取得したメッセージデータ(data.messages)やHP(data.hpData)で画面を更新する処理をここに書く
+      }
+    } catch (error) {
+      console.error("受信エラー:", error);
+    }
+  }, 1500); // 1.5秒ごとに同期
+}
+
+// 4. スコア保存（ゲーム終了時など）
+async function updateScore(userId, name, level, exp, label) {
+  try {
+    await fetch(`${SERVER_URL}/update-score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, name, level, exp, label })
+    });
+  } catch (error) {
+    console.error("スコア保存エラー:", error);
   }
+}
+
+// 5. ランキング取得
+async function getRanking() {
+  try {
+    const response = await fetch(`${SERVER_URL}/ranking`);
+    const text = await response.text();
+    return text;
+  } catch (error) {
+    console.error("ランキング取得エラー:", error);
+  }
+}  
 </script>
 
 </body>
