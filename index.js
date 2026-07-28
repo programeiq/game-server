@@ -1,131 +1,181 @@
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// CORS（通信制限）解除ミドルウェア
+// CORS設定
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
 app.use(express.json());
 
-// ゲームデータを保持するメモリ
+const PORT = process.env.PORT || 3000;
+
 let waitingPlayer = null;
 let rooms = {};
 
-// お題リスト
-const THEMES = [
-  "きのこの山 vs たけのこの里 どちらが優れているか？",
-  "犬派 vs 猫派 ペットにするならどっち？",
-  "朝型 vs 夜型 人生が豊かになるのはどっち？",
-  "お金 vs 愛 人生で本当に大切なのはどっち？",
-  "うどん vs そば 日本を代表する麺類はどっち？",
-  "インドア vs アウトドア 休日の過ごし方はどっちが最高？",
-  "ご飯派 vs パン派 最高の朝食はどっち？",
-  "コーヒー派 vs 紅茶派 一日の始まりに飲むならどっち？",
-  "夏 vs 冬 快適に過ごせる季節はどっち？",
-  "海 vs 山 最高の休暇を過ごすならどっち？",
-  "都会 vs 田舎 住んで幸せなのはどっち？",
-  "電話 vs メール 連絡を取るならどっちが便利？",
-  "紙の本 vs 電子書籍 読書をするならどっち？",
-  "自炊 vs 外食 お金が貯まり、豊かなのはどっち？",
-  "目覚まし時計 vs スマホの目覚まし 朝起きるならどっち？",
-  "温泉 vs 遊園地 週末の旅行で行くならどっち？",
-  "スニーカー vs 革靴 毎日履くならどっち？",
-  "リュック vs ショルダーバッグ 普段使いならどっち？",
-  "メガネ vs コンタクト 視力矯正するならどっち？",
-  "腕時計 vs スマホ 時間を確認するならどっち？",
-  "傘 vs 雨合羽 雨の日の移動はどっちが快適？",
-  "目玉焼き vs 卵焼き 朝食の卵料理ならどっち？",
-  "ショートケーキ vs チーズケーキ 好きなケーキはどっち？",
-  "ハンバーガー vs ピザ ファストフードならどっち？",
-  "ビール vs 日本酒 居酒屋で最初に頼むならどっち？",
-  "焼肉 vs 寿司 ご褒美に食べるならどっち？",
-  "カレー vs ラーメン 毎日でも食べたいのはどっち？",
-  "餃子 vs 焼売 中華の定番ならどっち？"
-];
+// 空の状態でスタートするランキングデータ
+let playerRankings = {};
 
-// ランダムにお題を1つ選択
-function getRandomTheme() {
-  return THEMES[Math.floor(Math.random() * THEMES.length)];
+// データの更新・保存関数
+function saveOrUpdatePlayer(userId, name, level, exp, label) {
+  if (!userId) return;
+
+  const numLevel = parseInt(level) || 1;
+  const numExp = parseInt(exp) || 0;
+  const current = playerRankings[userId];
+
+  if (
+    !current ||
+    numLevel > current.level ||
+    (numLevel === current.level && numExp > current.exp) ||
+    current.name !== name ||
+    current.label !== label
+  ) {
+    playerRankings[userId] = {
+      name: name || '名無し',
+      level: numLevel,
+      exp: numExp,
+      label: label || '一般人',
+      updatedAt: Date.now()
+    };
+  }
 }
 
-// 1. マッチング処理 API
-app.get('/match', (req, res) => {
-  const username = req.query.username || '名無しさん';
+// 5分ごとの定期送信API
+app.post('/update-score', (req, res) => {
+  const { userId, name, level, exp, label } = req.body;
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
 
-  // すでに待機中のプレイヤーがいるか確認
-  if (waitingPlayer && waitingPlayer.username !== username) {
+  saveOrUpdatePlayer(userId, name, level, exp, label);
+  res.json({ status: 'success', message: 'Ranking updated!' });
+});
+
+// マッチング処理
+app.get('/match', (req, res) => {
+  const username = req.query.username || '名無し';
+  const userId = req.query.userId || `guest_${Date.now()}`;
+
+  // 1. 待機中のプレイヤーが自分自身ならリセット
+  if (waitingPlayer && (waitingPlayer.userId === userId || waitingPlayer.username === username)) {
+    waitingPlayer = null;
+  }
+
+  // 2. 他の待機プレイヤーがいる場合 -> マッチング成立
+  if (waitingPlayer) {
     const roomName = `room_${Date.now()}`;
-    const selectedTheme = getRandomTheme();
+    const themes = [
+      { topic: "キノコの山 VS タケノコの里", sideA: "キノコの山", sideB: "タケノコの里" },
+      { topic: "朝食は パン派 VS ごはん派", sideA: "パン派", sideB: "ごはん派" },
+      { topic: "猫派 VS 犬派", sideA: "猫派", sideB: "犬派" },
+      { topic: "夏 VS 冬", sideA: "夏", sideB: "冬" },
+      { topic: "インドア VS アウトドア", sideA: "インドア", sideB: "アウトドア" },
+      { topic: "都会派 VS 田舎派", sideA: "都会派", sideB: "田舎派" }
+    ];
+    const selectedTheme = themes[Math.floor(Math.random() * themes.length)];
 
     rooms[roomName] = {
-      theme: selectedTheme,
+      theme: selectedTheme.topic,
+      sideA: selectedTheme.sideA,
+      sideB: selectedTheme.sideB,
       messages: [],
-      hpData: {
-        [waitingPlayer.username]: 2000,
-        [username]: 2000
-      }
+      hpData: { [waitingPlayer.username]: 2000, [username]: 2000 }
     };
 
-    const resultMessage = `MATCHING_SUCCESS | Room: ${roomName} | ${selectedTheme}`;
-    
-    // 待機プレイヤーへ通知を返すため response を一時保管
-    waitingPlayer.res.send(resultMessage);
+    const opponent = waitingPlayer;
     waitingPlayer = null;
 
-    return res.send(resultMessage);
+    // 1人目（待っていた人） = 前者(sideA)
+    opponent.res.send(`MATCHING_SUCCESS | Room: ${roomName} | ${selectedTheme.topic} | YOUR_SIDE: ${selectedTheme.sideA}`);
+    
+    // 2人目（今来た人） = 後者(sideB)
+    res.send(`MATCHING_SUCCESS | Room: ${roomName} | ${selectedTheme.topic} | YOUR_SIDE: ${selectedTheme.sideB}`);
+
   } else {
-    // 自分が待機列に登録される
-    waitingPlayer = { username, res };
+    // 3. 誰も待っていない場合 -> 待機状態に登録
+    waitingPlayer = { username, userId, res };
+
+    // タイムアウト対策（25秒経過で一度リセットしてクライアントに再接続させる）
+    const timeoutId = setTimeout(() => {
+      if (waitingPlayer && waitingPlayer.res === res) {
+        waitingPlayer = null;
+        if (!res.headersSent) {
+          res.send('WAITING_TIMEOUT');
+        }
+      }
+    }, 25000);
+
+    req.on('close', () => {
+      clearTimeout(timeoutId);
+      if (waitingPlayer && waitingPlayer.res === res) {
+        waitingPlayer = null;
+      }
+    });
   }
 });
 
-// 2. メッセージおよび状態取得 API
-app.get('/get-messages', (req, res) => {
-  const roomName = req.query.roomName;
-  if (!roomName || !rooms[roomName]) {
-    return res.json({ error: "ROOM_NOT_FOUND" });
-  }
-
-  res.json({
-    theme: rooms[roomName].theme,
-    messages: rooms[roomName].messages,
-    hpData: rooms[roomName].hpData
-  });
-});
-
-// 3. メッセージ送信 API
+// メッセージ送信
 app.post('/send-message', (req, res) => {
-  const { roomName, sender, text } = req.body;
-  if (!roomName || !rooms[roomName]) {
-    return res.status(400).send("Room not found");
+  const { roomName, sender, text, hp } = req.body;
+  if (rooms[roomName]) {
+    rooms[roomName].messages.push({ sender, text });
+    if (hp !== undefined) {
+      rooms[roomName].hpData[sender] = hp;
+    }
+    res.json({ status: 'ok' });
+  } else {
+    res.status(404).json({ error: 'Room not found' });
   }
-
-  rooms[roomName].messages.push({ sender, text });
-  res.send("SUCCESS");
 });
 
-// 4. ゲーム終了・部屋削除 API
+// メッセージ取得
+app.get('/get-messages', (req, res) => {
+  const { roomName } = req.query;
+  if (rooms[roomName]) {
+    res.json(rooms[roomName]);
+  } else {
+    res.status(404).json({ error: 'Room not found' });
+  }
+});
+
+// ゲーム終了（部屋削除）
 app.post('/game-over', (req, res) => {
   const { roomName } = req.body;
-  if (roomName && rooms[roomName]) {
-    delete rooms[roomName];
-  }
-  res.send("SUCCESS");
+  if (rooms[roomName]) delete rooms[roomName];
+  res.json({ status: 'cleaned' });
 });
 
-// 5. ランキング表示 API (ダミー表示)
+// ランキング取得API
 app.get('/ranking', (req, res) => {
-  res.send("1位: ゆる論マスター (Lv.100)\n2位: 論破キング (Lv.85)\n3位: ひよこ代表 (Lv.50)");
+  let sortedList = Object.keys(playerRankings).map(id => {
+    return {
+      id: id,
+      ...playerRankings[id]
+    };
+  }).sort((a, b) => {
+    if (b.level !== a.level) return b.level - a.level;
+    return b.exp - a.exp;
+  });
+
+  if (sortedList.length === 0) {
+    return res.send("[殿堂入り レベルランキング]\n\n現在ランキングデータはありません。");
+  }
+
+  let text = "[殿堂入り レベルランキング TOP10]\n\n";
+  const top10 = sortedList.slice(0, 10);
+
+  top10.forEach((player, index) => {
+    const displayId = player.id.length > 12 ? player.id.substring(0, 10) + "..." : player.id;
+    text += `${index + 1}位 : ${player.name} (ID: ${displayId})\n`;
+    text += `       └ Lv.${player.level} [${player.label}]\n\n`;
+  });
+
+  res.send(text);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
